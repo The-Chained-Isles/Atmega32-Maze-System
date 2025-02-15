@@ -8,7 +8,7 @@
 uint8_t cycle=0,Door_Num=0;
 char PlayAlert[16];
 bool PrintT=false,PrintP=false;
-bool SensorsReadings[6];
+uint8_t SensorsReadings[6];
 bool CheckForPlayer=true;
 bool QMemory[16];
 char* questions[16][2]={ //16 questions chosen randomly by cycle
@@ -86,6 +86,7 @@ int main(void){
 	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds,
 	PORTB=0,PORTC=1,PORTD=0,PORTA=0;_delay_ms(20); //Reset Ports
 	memset(SensorsReadings,0,sizeof(SensorsReadings));
+	setB(0,0);
 	LCD_Init();BeMessage("HALLO");
 	Timer1_Init(20);
 	_delay_ms(50);
@@ -101,8 +102,9 @@ int main(void){
 	}
 }
 void CheckSensors(){
-	SensorsReadings[0]= (PINA&(1<<7));
-	for(int i=0;i<5;i++)//read sensors on doors
+	uint16_t FSR_Voltage = ADC_Read(7);
+	SensorsReadings[0]= (FSR_Voltage>705) ? 2 : (FSR_Voltage>630);
+	for(int i=0;i<5;i++)
 	SensorsReadings[i+1]= (PINB&(1<<i));
 }
 void Timer1_Init(int denominator) {
@@ -114,14 +116,15 @@ void Timer1_Init(int denominator) {
 	sei(); // Enable global interrupts
 }
 void CheckTemperature(){
-	PrintT = (PINA&1);
+	uint16_t Current_NHC_Volt = ADC_Read(0);
+	PrintT = (Current_NHC_Volt<250); //Alert if NHC is heated (voltage drop over 250 counts);
 }
 void CheckPlayers()
 {
 	uint8_t sum=0;
 	const char NPF[16]="NO PLAYER FOUND",OPO[16]="1 PLAYER ONLY",GBS[16]="Go to start";
 	const char GBC[16]="GO BACK, Cheat!",FRWRD[16]="Forward!";
-	for (int i=0;i<6;i++) sum+=(SensorsReadings[i]); //sum the number of players, Then choose alert to print if fault
+	for (int i=0;i<5;i++) sum+=(SensorsReadings[i]); //sum the number of players, Then choose alert to print if fault
 	if(CheckForPlayer) {
 		if (sum==1) {
 			if (SensorsReadings[Door_Num]) PrintP=false;
@@ -186,14 +189,14 @@ bool winner (void)
 		strcat(Door_str, " Tries Left");
 		BeMode(0xC0),BeMessage(Door_str),_delay_ms(5); //display tries left
 		if (CheckAnswer(Door_Num)) {
-			open(++Door_Num-1), // open the door
-			Tries=0, //reset Tries to zero
+			open(++Door_Num-1); // open the door
+			Tries=0; //reset Tries to zero
 			PORTC= (PORTC&0xF8) | (1+Door_Num); //Coloured LEDs in Binary
 		}
 		else {
-			Tries++, //increment Tries
-			LCD_Init(),
-			BeMessage("Wrong"),
+			Tries++; //increment Tries
+			LCD_Init();
+			BeMessage("Wrong");
 			_delay_ms(20);
 		}
 	}
@@ -218,17 +221,16 @@ void BeMode(uint8_t cmd) {
 }
 void setB(bool door,bool set){
 	PORTB|=(1<<(door+6));
-	(!set) ? _delay_us(200) : _delay_us(20);
+	(!set) ? _delay_ms(2) : _delay_ms(1);
 	PORTB &= ~(1<<(door+6));
-	_delay_ms(20);
+	_delay_ms(1000);
 }
 void setD(uint8_t door,bool set){
 	door+= (door<4) ? -2 : 2;
 	PORTD|=(1<<door);
-	(!set) ? _delay_us(200) : _delay_us(20);
-	//delay 20 is reseting and 200 is setting, the timer caused this hassle because it delays the motors
+	(!set) ? _delay_ms(2) : _delay_ms(1);
 	PORTD &= ~(1<<door);
-	_delay_ms(20);
+	_delay_ms(1000);
 }
 void open(uint8_t Door){
 	if (Door<2) setB(Door,true);

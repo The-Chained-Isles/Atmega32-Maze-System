@@ -130,9 +130,11 @@ void Timer1_Init(int denominator) {
 	TIMSK |= (1 << OCIE1A); // Enable Timer1 Compare Match A interrupt
 	sei(); // Enable global interrupts
 }
-void CheckTemperature()
-{
-	PrintT = (PINA&1) ? true : false;
+void CheckTemperature(){
+	uint16_t ADCRead=ADC_Read(0);
+	uint16_t voltage_mv=ADCRead*5000/1024;
+	uint8_t temp=voltage_mv/10;
+	PrintT = (temp>30); //Alert if Temperature>30
 }
 void CheckPlayers()
 {

@@ -5,10 +5,7 @@
 #include <avr/interrupt.h>
 #include <stdbool.h>
 #include <string.h>
-uint8_t cycle=0,Door_Num=0;
-char PlayAlert[16];
-bool PrintT=false,PrintP=false;
-uint8_t SensorsReadings[6];
+uint8_t cycle=0,Door_Num=0,TimerOverflow;
 bool CheckForPlayer=true;
 bool QMemory[16];
 char* questions[16][2]={ //16 questions chosen randomly by cycle
@@ -51,122 +48,70 @@ uint8_t correct_answers[16] = {1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 3, 3, 3, 0, 0, 2};
 void ADC_init();
 uint16_t ADC_Read(uint8_t pin);
 void CheckSensors();
-void Timer1_Init(int denominator);
+void Timer0_Init();
+void Timer1_Init();
 void BeMode(uint8_t cmd);
 void BeMessage(char* str);
-void BeM(char* str);
-void CheckTemperature();
-void CheckPlayers();
-ISR(TIMER1_COMPA_vect) {
-	CheckTemperature(),
-	CheckSensors(),
-	CheckPlayers(),
-	cycle = (cycle + 1) % 16,
-	Timer1_Init(2); // Reinitialize the timer with the desired denominator
+bool CheckTemperature();
+ISR(TIMER0_OVF_vect) {
+	cycle = (cycle + 1) % 16;
 }
 bool CheckAnswer(uint8_t Door_Num);
 bool winner (void);
 void LCD_Init(void);
 void setB(bool door,bool set);
-void setD(uint8_t door,bool set);
+void setC(uint8_t door,bool set);
 void open(uint8_t Door);
+ISR(TIMER1_OVF_vect){
+	TimerOverflow++;	/* Increment Timer Overflow count */
+}
+double ultra(void);
 int main(void){
 	ADC_init();
 	DDRA=0b01111110;//will use PA0 for temp sensor,PA7 for force sensor, the rest are for the LCD
 	DDRB=0b11000000; // will use and PB(0-4) for door sensors input, and PB(6-7) for 2 doors
-	DDRD=0b11000011; //will use PD(2-5) for Keypad, and other PD pins for 4 doors
-	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds,
-	PORTB=0,PORTC=1,PORTD=0,PORTA=0;_delay_ms(20); //Reset Ports
-	memset(SensorsReadings,0,sizeof(SensorsReadings));
+	DDRD=1; //will use PD(2-5) for Keypad, PD0 for trig, PD6 for Echo
+	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds, other pins for 4 doors
+	PORTB=0,PORTC=1,PORTD=0x40,PORTA=0;_delay_ms(20); //Reset Ports
 	open(7);
+	Timer1_Init(),Timer0_Init();
 	LCD_Init();BeMessage("HALLO");
 	_delay_ms(50);
 	while (1)
 	{
-		if (winner())
-		{
-			LCD_Init(); BeMessage("Congratulations!");_delay_ms(15);
-			BeMode(0xC0);BeMessage("    YOU WIN");// new line
-			_delay_ms(100);
+		uint8_t FSR_Voltage = ADC_Read(7);
+		uint8_t Players_First_Gate= (Players_First_Gate>300) ? 2 : (FSR_Voltage!=0);
+		while(!(Players_First_Gate&1)){
+			FSR_Voltage = ADC_Read(7);
+			Players_First_Gate= (Players_First_Gate>300) ? 2 : (FSR_Voltage!=0);
+			LCD_Init();
+			if (Players_First_Gate&2)
+			BeMessage("1 PLAYER ONLY");
+			else
+			BeMessage("NO PLAYER FOUND");
+			_delay_ms(1000);
 		}
-		CheckForPlayer=0; //check for empty maze
+		if (winner())
+		LCD_Init(),
+		BeMessage("Congratulations!"),
+		_delay_ms(1500),
+		BeMode(0xC0),
+		BeMessage("    YOU WIN"),// new line
+		_delay_ms(1500);
+		while (ultra()<5)
+		LCD_Init(),
+		BeMessage("GET OUT"),
+		_delay_ms(1000);
 	}
 }
-void CheckSensors()
-{
-	uint16_t FSR_Voltage = ADC_Read(7);
-	SensorsReadings[0]= (FSR_Voltage>300) ? 2 : (FSR_Voltage!=0);
-	for(int i=0;i<4;i++)
-		SensorsReadings[i+1]= (!(Door_Num-i));
-	SensorsReadings[5]=0;
-	/*char a[16],b[16],c[16],d[16],e[16],f[16];
-	sprintf(a,"%d",SensorsReadings[0]);
-	sprintf(b,"%d",SensorsReadings[1]);
-	sprintf(c,"%d",SensorsReadings[2]);
-	sprintf(d,"%d",SensorsReadings[3]);
-	sprintf(e,"%d",SensorsReadings[4]);
-	sprintf(f,"%d",SensorsReadings[5]);
-	LCD_Init();
-	BeMessage("a: "),BeM(a),_delay_ms(1000);
-	LCD_Init();
-	BeMessage("b: "),BeM(b),_delay_ms(100);
-	LCD_Init();
-	BeMessage("c: "),BeM(c),_delay_ms(100);
-	LCD_Init();
-	BeMessage("d: "),BeM(d),_delay_ms(100);
-	LCD_Init();
-	BeMessage("e: "),BeM(e),_delay_ms(100);
-	LCD_Init();
-	BeMessage("f: "),BeM(f),_delay_ms(100);
-	*/
-}
-void Timer1_Init(int denominator) {
-	TCCR1B |= (1 << WGM12); // Set CTC mode
-	TCCR1B |= (1 << CS11) | (1 << CS10); // Set Prescaler to 64
-	uint16_t compare_match_value = 124999 / denominator;
-	OCR1A = compare_match_value; // Set Compare Match value for 1-second/denominator delay
-	TIMSK |= (1 << OCIE1A); // Enable Timer1 Compare Match A interrupt
+void Timer0_Init() {
+	TCCR0 |= (1 << CS00); // no prescaler
+	TIMSK = (1 << TOIE0);
 	sei(); // Enable global interrupts
 }
-void CheckTemperature(){
+bool CheckTemperature(){
 	uint16_t Current_NHC_Volt = ADC_Read(0);
-	if (Current_NHC_Volt)
-	PrintT = ((Current_NHC_Volt<250)); //Alert if NHC is heated (voltage drop over 250 counts);
-}
-void CheckPlayers()
-{
-	uint8_t sum=0;
-	const char NPF[16]="NO PLAYER FOUND",OPO[16]="1 PLAYER ONLY",GBS[16]="Go to start";
-	const char GBC[16]="GO BACK, Cheat!",FRWRD[16]="Forward!";
-	for (int i=0;i<5;i++) sum+=(SensorsReadings[i]); //sum the number of players, Then choose alert to print if fault
-	Door_Num=(Door_Num%6);
-	if(CheckForPlayer) {
-		if (sum==1) {
-			
-			if (SensorsReadings[Door_Num]) PrintP=false;
-			else
-			{
-				PrintP=true;
-				for (uint8_t i = 0;i<6;i++){
-					if (SensorsReadings[i])
-					{
-						if (i<Door_Num&& Door_Num!=6) strcpy(PlayAlert,FRWRD);
-						else strcpy(PlayAlert,GBC);
-						break;
-					}
-				}
-			}
-		}
-		else{
-			if (!sum) strcpy(PlayAlert,NPF);
-			else strcpy(PlayAlert,OPO);
-			PrintP=true;
-		}
-	}
-	else {
-		if (sum) strcpy(PlayAlert,GBS),PrintP=true;
-		else PrintP=false,CheckForPlayer=true;
-	}
+	return ((Current_NHC_Volt<250)&&Current_NHC_Volt); //Alert if NHC is heated (voltage drop over 250 counts);
 }
 bool CheckAnswer(uint8_t Door_Num) {
 	uint8_t q = cycle;
@@ -198,21 +143,22 @@ bool winner (void)
 	open(6); //reset doors
 	uint8_t Tries=0;char Door_str[1];
 	while (Tries<3&&Door_Num!=6){
-		PORTC= (PORTC&0xF8)|(Door_Num+1);
-		sprintf(Door_str,"%d",Door_Num + 1);
+		while (CheckTemperature())LCD_Init(),BeMessage("TEMP ALERT"),_delay_ms(1500);
+		PORTC= (PORTC&0xF8)|(Door_Num+1),
+		sprintf(Door_str,"%d",Door_Num + 1),
 		LCD_Init(),BeMessage("Door "),BeMessage(Door_str),_delay_ms(5); //display door number
-		sprintf(Door_str,"%d",3-Tries);
-		strcat(Door_str, " Tries Left");
+		sprintf(Door_str,"%d",3-Tries),
+		strcat(Door_str, " Tries Left"),
 		BeMode(0xC0),BeMessage(Door_str),_delay_ms(5); //display tries left
 		if (CheckAnswer(Door_Num)) {
-			(Door_Num==6)? open(6) : open(++Door_Num-1); // open the door // open the door
-			Tries=0; //reset Tries to zero
+			(Door_Num==6)? open(6) : open(++Door_Num-1), // open the door // open the door
+			Tries=0, //reset Tries to zero
 			PORTC= (PORTC&0xF8) | (1+Door_Num); //Coloured LEDs in Binary
 		}
 		else {
-			Tries++; //increment Tries
-			LCD_Init();
-			BeMessage("Wrong");
+			Tries++, //increment Tries
+			LCD_Init(),
+			BeMessage("Wrong"),
 			_delay_ms(20);
 		}
 	}
@@ -242,8 +188,8 @@ void setB(bool door,bool set){
 	PORTB &= ~(1<<(door+6)),
 	(set) ? _delay_ms(19) : _delay_ms(18);
 }
-void setD(uint8_t door,bool set){
-	door+= (door<4) ? -2 : 2;
+void setC(uint8_t door,bool set){
+	door+= (door<4) ? 1 : 2;
 	for (int i=0;i<50;i++)
 	PORTD|=(1<<door),
 	(set) ? _delay_ms(1) : _delay_ms(2),
@@ -252,16 +198,15 @@ void setD(uint8_t door,bool set){
 }
 void open(uint8_t Door){
 	if (Door<2) setB(Door,true);
-	else if (Door<6) setD(Door,true);
+	else if (Door<6) setC(Door,true);
 	else{
 		setB(false,false),
 		setB(true,false);
 		for (uint8_t i =2;i<6;i++)
-		setD(i,false);
+		setC(i,false);
 	}
-	Timer1_Init(20);
 }
-void BeM(char* str) {
+void BeMessage(char* str) {
 	for (uint8_t i = 0; str[i] != 0; i++) {
 		// Send higher nibble
 		PORTA = (PORTA & 0x87) | ((str[i] >> 1) & 0x78); // Set higher nibble on PA3-6
@@ -288,11 +233,6 @@ void LCD_Init(void) {
 	BeMode(0x01); // Clear display
 	_delay_ms(20);
 }
-void BeMessage(char* str) {
-	while (PrintT) BeM("TEMP ALERT!!"),_delay_ms(15),LCD_Init(); //alert if any fault occurred
-	while (PrintP) BeM(PlayAlert),_delay_ms(15),LCD_Init();
-	BeM(str);
-}
 void ADC_init(){
 	ADMUX|=1<<REFS0;
 	ADCSRA|=(1<<ADEN)|(1<<ADPS0)|(1<<ADPS1)|(1<<ADPS2);
@@ -302,4 +242,30 @@ uint16_t ADC_Read(uint8_t pin){
 	ADCSRA|=1<<ADSC;
 	while(ADCSRA&(1<<ADIF));
 	return ADC;
+}
+void Timer1_Init(){
+	TIMSK = (1 << TOIE1);
+	TCCR1A = 0;
+}
+double ultra(void){
+	/* Give 10us trigger pulse on trig. pin to HC-SR04 */
+	PORTD |= 1;
+	_delay_us(10);
+	PORTD &= ~1;
+	TCNT1 = 0;	/* Clear Timer counter */
+	TCCR1B = 0x41;	/* Capture on rising edge, No prescaler*/
+	TIFR = 1<<ICF1;	/* Clear ICP flag (Input Capture flag) */
+	TIFR = 1<<TOV1;	/* Clear Timer Overflow flag */
+	/*Calculate width of Echo by Input Capture (ICP) */
+	while ((TIFR & (1 << ICF1)) == 0);/* Wait for rising edge */
+	TCNT1 = 0;	/* Clear Timer counter */
+	TCCR1B = 0x01;	/* Capture on falling edge, No prescaler */
+	TIFR = 1<<ICF1;	/* Clear ICP flag (Input Capture flag) */
+	TIFR = 1<<TOV1;	/* Clear Timer Overflow flag */
+	TimerOverflow = 0;/* Clear Timer overflow count */
+	while ((TIFR & (1 << ICF1)) == 0);/* Wait for falling edge */
+	uint32_t count = ICR1 + (65535 * TimerOverflow);	/* Take count */
+	/* 16MHz Timer freq, sound speed =343 m/s */
+	double distance = (double)count / 932.94;
+	return distance;
 }

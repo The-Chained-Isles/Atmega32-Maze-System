@@ -8,7 +8,7 @@
 uint8_t cycle=0,Door_Num=0;
 char PlayAlert[16];
 bool PrintT=false,PrintP=false;
-bool SensorsReadings[6];
+uint8_t SensorsReadings[6];
 bool CheckForPlayer=true;
 bool QMemory[16];
 char* questions[16][2]={ //16 questions chosen randomly by cycle
@@ -58,7 +58,7 @@ void BeM(char* str);
 void CheckTemperature();
 void CheckPlayers();
 ISR(TIMER1_COMPA_vect) {
-	//CheckTemperature(),
+	CheckTemperature(),
 	CheckSensors(),
 	CheckPlayers(),
 	cycle = (cycle + 1) % 16,
@@ -81,9 +81,6 @@ int main(void){
 	open(7);
 	LCD_Init();BeMessage("HALLO");
 	_delay_ms(50);
-	while(1){
-		CheckSensors();
-	}
 	while (1)
 	{
 		if (winner())
@@ -95,12 +92,14 @@ int main(void){
 		CheckForPlayer=0; //check for empty maze
 	}
 }
-void CheckSensors(){
+void CheckSensors()
+{
 	uint16_t FSR_Voltage = ADC_Read(7);
-	SensorsReadings[0]= (FSR_Voltage>705) ? 2 : (FSR_Voltage>630);
-	for(int i=0;i<5;i++)
-	SensorsReadings[i+1]= (PINB&(1<<i));
-	char a[16],b[16],c[16],d[16],e[16],f[16];
+	SensorsReadings[0]= (FSR_Voltage>300) ? 2 : (FSR_Voltage!=0);
+	for(int i=0;i<4;i++)
+		SensorsReadings[i+1]= (!(Door_Num-i));
+	SensorsReadings[5]=0;
+	/*char a[16],b[16],c[16],d[16],e[16],f[16];
 	sprintf(a,"%d",SensorsReadings[0]);
 	sprintf(b,"%d",SensorsReadings[1]);
 	sprintf(c,"%d",SensorsReadings[2]);
@@ -119,6 +118,7 @@ void CheckSensors(){
 	BeMessage("e: "),BeM(e),_delay_ms(100);
 	LCD_Init();
 	BeMessage("f: "),BeM(f),_delay_ms(100);
+	*/
 }
 void Timer1_Init(int denominator) {
 	TCCR1B |= (1 << WGM12); // Set CTC mode
@@ -236,7 +236,7 @@ void BeMode(uint8_t cmd) {
 	_delay_ms(20);
 }
 void setB(bool door,bool set){
-	//for (int i=0;i<50;i++)
+	for (int i=0;i<50;i++)
 	PORTB|=(1<<(door+6)),
 	(set) ? _delay_ms(1) : _delay_ms(2),
 	PORTB &= ~(1<<(door+6)),
@@ -244,7 +244,7 @@ void setB(bool door,bool set){
 }
 void setD(uint8_t door,bool set){
 	door+= (door<4) ? -2 : 2;
-	//for (int i=0;i<50;i++)
+	for (int i=0;i<50;i++)
 	PORTD|=(1<<door),
 	(set) ? _delay_ms(1) : _delay_ms(2),
 	PORTD &= ~(1<<door),
@@ -289,7 +289,7 @@ void LCD_Init(void) {
 	_delay_ms(20);
 }
 void BeMessage(char* str) {
-	for(int i=0;i<5;i++) if (PrintT) BeM("TEMP ALERT!!"),_delay_ms(15),LCD_Init(); //alert if any fault occurred
+	while (PrintT) BeM("TEMP ALERT!!"),_delay_ms(15),LCD_Init(); //alert if any fault occurred
 	while (PrintP) BeM(PlayAlert),_delay_ms(15),LCD_Init();
 	BeM(str);
 }

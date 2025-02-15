@@ -8,7 +8,7 @@
 uint8_t cycle=0,Door_Num=0;
 char PlayAlert[16];
 bool PrintT=false,PrintP=false;
-uint8_t SensorsReadings[6];
+bool SensorsReadings[6];
 bool CheckForPlayer=true;
 bool QMemory[16];
 char* questions[16][2]={ //16 questions chosen randomly by cycle
@@ -48,16 +48,8 @@ char* answers[16][2] = {
 	{"1) 0  2) 2", "3) 1  4) 10"}
 };
 uint8_t correct_answers[16] = {1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 3, 3, 3, 0, 0, 2};
-void ADC_init(){
-	ADMUX|=1<<REFS0;
-	ADCSRA|=(1<<ADEN)|(1<<ADPS0)|(1<<ADPS1)|(1<<ADPS2);
-}
-uint16_t ADC_Read(uint8_t pin){
-	ADMUX = (ADMUX&0xF8)|(pin&0x07);
-	ADCSRA|=1<<ADSC;
-	while(ADCSRA&(1<<ADIF));
-	return ADC;
-}
+void ADC_init();
+uint16_t ADC_Read(uint8_t pin);
 void CheckSensors();
 void Timer1_Init(int denominator);
 void BeMode(uint8_t cmd);
@@ -66,7 +58,7 @@ void BeM(char* str);
 void CheckTemperature();
 void CheckPlayers();
 ISR(TIMER1_COMPA_vect) {
-	CheckTemperature(),
+	//CheckTemperature(),
 	CheckSensors(),
 	CheckPlayers(),
 	cycle = (cycle + 1) % 16,
@@ -86,10 +78,12 @@ int main(void){
 	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds,
 	PORTB=0,PORTC=1,PORTD=0,PORTA=0;_delay_ms(20); //Reset Ports
 	memset(SensorsReadings,0,sizeof(SensorsReadings));
-	setB(0,0);
+	open(7);
 	LCD_Init();BeMessage("HALLO");
-	Timer1_Init(20);
 	_delay_ms(50);
+	while(1){
+		CheckSensors();
+	}
 	while (1)
 	{
 		if (winner())
@@ -106,6 +100,25 @@ void CheckSensors(){
 	SensorsReadings[0]= (FSR_Voltage>705) ? 2 : (FSR_Voltage>630);
 	for(int i=0;i<5;i++)
 	SensorsReadings[i+1]= (PINB&(1<<i));
+	char a[16],b[16],c[16],d[16],e[16],f[16];
+	sprintf(a,"%d",SensorsReadings[0]);
+	sprintf(b,"%d",SensorsReadings[1]);
+	sprintf(c,"%d",SensorsReadings[2]);
+	sprintf(d,"%d",SensorsReadings[3]);
+	sprintf(e,"%d",SensorsReadings[4]);
+	sprintf(f,"%d",SensorsReadings[5]);
+	LCD_Init();
+	BeMessage("a: "),BeM(a),_delay_ms(1000);
+	LCD_Init();
+	BeMessage("b: "),BeM(b),_delay_ms(100);
+	LCD_Init();
+	BeMessage("c: "),BeM(c),_delay_ms(100);
+	LCD_Init();
+	BeMessage("d: "),BeM(d),_delay_ms(100);
+	LCD_Init();
+	BeMessage("e: "),BeM(e),_delay_ms(100);
+	LCD_Init();
+	BeMessage("f: "),BeM(f),_delay_ms(100);
 }
 void Timer1_Init(int denominator) {
 	TCCR1B |= (1 << WGM12); // Set CTC mode
@@ -117,7 +130,8 @@ void Timer1_Init(int denominator) {
 }
 void CheckTemperature(){
 	uint16_t Current_NHC_Volt = ADC_Read(0);
-	PrintT = (Current_NHC_Volt<250); //Alert if NHC is heated (voltage drop over 250 counts);
+	if (Current_NHC_Volt)
+	PrintT = ((Current_NHC_Volt<250)); //Alert if NHC is heated (voltage drop over 250 counts);
 }
 void CheckPlayers()
 {
@@ -125,8 +139,10 @@ void CheckPlayers()
 	const char NPF[16]="NO PLAYER FOUND",OPO[16]="1 PLAYER ONLY",GBS[16]="Go to start";
 	const char GBC[16]="GO BACK, Cheat!",FRWRD[16]="Forward!";
 	for (int i=0;i<5;i++) sum+=(SensorsReadings[i]); //sum the number of players, Then choose alert to print if fault
+	Door_Num=(Door_Num%6);
 	if(CheckForPlayer) {
 		if (sum==1) {
+			
 			if (SensorsReadings[Door_Num]) PrintP=false;
 			else
 			{
@@ -189,7 +205,7 @@ bool winner (void)
 		strcat(Door_str, " Tries Left");
 		BeMode(0xC0),BeMessage(Door_str),_delay_ms(5); //display tries left
 		if (CheckAnswer(Door_Num)) {
-			open(++Door_Num-1); // open the door
+			(Door_Num==6)? open(6) : open(++Door_Num-1); // open the door // open the door
 			Tries=0; //reset Tries to zero
 			PORTC= (PORTC&0xF8) | (1+Door_Num); //Coloured LEDs in Binary
 		}
@@ -220,17 +236,19 @@ void BeMode(uint8_t cmd) {
 	_delay_ms(20);
 }
 void setB(bool door,bool set){
-	PORTB|=(1<<(door+6));
-	(!set) ? _delay_ms(2) : _delay_ms(1);
-	PORTB &= ~(1<<(door+6));
-	_delay_ms(1000);
+	//for (int i=0;i<50;i++)
+	PORTB|=(1<<(door+6)),
+	(set) ? _delay_ms(1) : _delay_ms(2),
+	PORTB &= ~(1<<(door+6)),
+	(set) ? _delay_ms(19) : _delay_ms(18);
 }
 void setD(uint8_t door,bool set){
 	door+= (door<4) ? -2 : 2;
-	PORTD|=(1<<door);
-	(!set) ? _delay_ms(2) : _delay_ms(1);
-	PORTD &= ~(1<<door);
-	_delay_ms(1000);
+	//for (int i=0;i<50;i++)
+	PORTD|=(1<<door),
+	(set) ? _delay_ms(1) : _delay_ms(2),
+	PORTD &= ~(1<<door),
+	(set) ? _delay_ms(19) : _delay_ms(18);
 }
 void open(uint8_t Door){
 	if (Door<2) setB(Door,true);
@@ -271,7 +289,17 @@ void LCD_Init(void) {
 	_delay_ms(20);
 }
 void BeMessage(char* str) {
-	while (PrintT) BeM("TEMP ALERT!!"),_delay_ms(15),LCD_Init(); //alert if any fault occurred
+	for(int i=0;i<5;i++) if (PrintT) BeM("TEMP ALERT!!"),_delay_ms(15),LCD_Init(); //alert if any fault occurred
 	while (PrintP) BeM(PlayAlert),_delay_ms(15),LCD_Init();
 	BeM(str);
+}
+void ADC_init(){
+	ADMUX|=1<<REFS0;
+	ADCSRA|=(1<<ADEN)|(1<<ADPS0)|(1<<ADPS1)|(1<<ADPS2);
+}
+uint16_t ADC_Read(uint8_t pin){
+	ADMUX = (ADMUX&0xF8)|(pin&0x07);
+	ADCSRA|=1<<ADSC;
+	while(ADCSRA&(1<<ADIF));
+	return ADC;
 }

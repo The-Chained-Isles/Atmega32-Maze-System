@@ -75,8 +75,7 @@ ISR(TIMER0_OVF_vect) { //%: remainder
 bool CheckAnswer(uint8_t Door_Num);
 bool winner (void);
 void LCD_Init(void);
-void setB(bool door,bool set);
-void setC(uint8_t door,bool set);
+void setB(uint8_t door,bool set);
 void open(uint8_t Door);
 ISR(TIMER1_OVF_vect){
 	TimerOverflow++;	/* Increment Timer Overflow count */
@@ -86,14 +85,15 @@ double ultra(void);
 int main(void){
 	ADC_init();
 	DDRA=0b01111110;//will use PA0 for temp sensor,PA7 for force sensor, the rest are for the LCD
-	DDRB=0x03; // will use and PB(0-4) for door sensors input, and PB(0-1) for 2 doors
+	DDRB=0; // PB(0-5) for 6 doors
 	DDRD=1; //will use PD(2-5) for Keypad, PD0 for trig, PD6 for Echo
-	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds, other pins for 4 doors
+	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds
 	PORTB=0,PORTC=1,PORTD=0b01111100,PORTA=0;_delay_ms(20); //Reset Ports
 	open(7);
 	Timer1_Init(),Timer0_Init();
 	LCD_Init();BeMessage("HALLO");
 	_delay_ms(50);
+	
 	while (1)
 	{
 		uint8_t FSR_Voltage = ADC_Read(7); //read voltage from FSR
@@ -224,29 +224,18 @@ void BeMode(uint8_t cmd) {
 	PORTA &= ~(1 << 2); // Disable pulse
 	_delay_ms(20);
 }
-void setB(bool door,bool set){
+void setB(uint8_t door,bool set){
 	for (int i=0;i<50;i++)
 	PORTB|=(1<<(door)), //1ms is 0 deg, 2ms is 90 deg
 	(set) ? _delay_ms(1) : _delay_ms(2),
 	PORTB &= ~(1<<(door)), //cycle is 20ms in total
 	(set) ? _delay_ms(19) : _delay_ms(18);
 }
-void setC(uint8_t door,bool set){
-	door+= (door<4) ? 1 : 2;
-	for (int i=0;i<50;i++)
-	PORTC|=(1<<door),//1ms is 0 deg, 2ms is 90 deg
-	(set) ? _delay_ms(1) : _delay_ms(2),
-	PORTC &= ~(1<<door),//cycle is 20ms in total
-	(set) ? _delay_ms(19) : _delay_ms(18);
-}
 void open(uint8_t Door){
 	if (Door<2) setB(Door,true);//open one of the doors in PORTB
-	else if (Door<6) setC(Door,true); //open one of the doors in PORTC
 	else{//close all doors
-		setB(0,false),
-		setB(1,false);
-		for (uint8_t i =2;i<6;i++)
-		setC(i,false);
+		for (uint8_t i =0;i<6;i++)
+		setB(i,false);
 	}
 }
 void BeMessage(char* str) {

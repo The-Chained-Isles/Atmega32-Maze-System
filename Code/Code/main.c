@@ -1,4 +1,4 @@
-#define F_CPU 16e6
+#define F_CPU 16000000UL
 #include <avr/io.h>
 #include <util/delay.h>
 #include <stdio.h>
@@ -8,7 +8,7 @@
 uint8_t cycle=0,Door_Num=0;
 char PlayAlert[16];
 bool PrintT=false,PrintP=false;
-uint8_t SensorsReadings[6];
+bool SensorsReadings[6];
 bool CheckForPlayer=true;
 bool QMemory[16];
 char* questions[16][2]={ //16 questions chosen randomly by cycle
@@ -66,21 +66,24 @@ void BeM(char* str);
 void CheckTemperature();
 void CheckPlayers();
 ISR(TIMER1_COMPA_vect) {
-	CheckTemperature();
-	CheckPlayers();
-	cycle = (cycle + 1) % 16;
+	CheckTemperature(),
+	CheckSensors(),
+	CheckPlayers(),
+	cycle = (cycle + 1) % 16,
 	Timer1_Init(2); // Reinitialize the timer with the desired denominator
 }
 bool CheckAnswer(uint8_t Door_Num);
 bool winner (void);
 void LCD_Init(void);
+void setB(bool door,bool set);
+void setD(uint8_t door,bool set);
 void open(uint8_t Door);
 int main(void){
 	ADC_init();
 	DDRA=0b01111110;//will use PA0 for temp sensor,PA7 for force sensor, the rest are for the LCD
-	DDRB=0b11000000; // will use PB5 for echo_Door2, and PB(0-4) for ultrasonic TRIG signal, and PB(6-7) for 2 doors
+	DDRB=0b11000000; // will use and PB(0-4) for door sensors input, and PB(6-7) for 2 doors
 	DDRD=0b11000011; //will use PD(2-5) for Keypad, and other PD pins for 4 doors
-	DDRC=0b00100111; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds,PC(3,4,5,7) for echo_Door(3-6)
+	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds,
 	PORTB=0,PORTC=1,PORTD=0,PORTA=0;_delay_ms(20); //Reset Ports
 	memset(SensorsReadings,0,sizeof(SensorsReadings));
 	LCD_Init();BeMessage("HALLO");
@@ -88,43 +91,19 @@ int main(void){
 	_delay_ms(50);
 	while (1)
 	{
-		if (winner()){
+		if (winner())
+		{
 			LCD_Init(); BeMessage("Congratulations!");_delay_ms(15);
 			BeMode(0xC0);BeMessage("    YOU WIN");// new line
 			_delay_ms(100);
-		}
-		else{
-			Door_Num=0;
 		}
 		CheckForPlayer=0; //check for empty maze
 	}
 }
 void CheckSensors(){
-	uint16_t FSR_Voltage = ADC_Read(7);
-	SensorsReadings[0]= (FSR_Voltage>560) ? 2 : (FSR_Voltage>490); //if v > 560: players>1, v>480: players=1, v<480: players=0
-	for(int i=0;i<=0;i++){//read ultrasonic sensors on doors (2-6) with steps
-		PORTB|=(1<<i); //1-TRIG HIGH
-		_delay_us(10); //2-DELAY
-		PORTB&=~(1<<i);//3-TRIG LOW, pulse is sent!
-		uint16_t StartCount,EndCount,TotalTime,TotalCount;
-		uint8_t d;
-		/*if (i){
-			uint8_t Echo_pin=(i<3)? i+2 : i+3;
-			while (!(PIND & (1 << Echo_pin)));//3-wait for Rising Edge
-			StartCount=TCNT1;
-			while ((PIND &  (1 << Echo_pin)));//4-wait for Falling Edge
-			EndCount=TCNT1;
-			}else{*/
-			while (!(PINB & (1 << 4)));
-			StartCount=TCNT1;
-			while ((PINB & (1 << 4)));
-			EndCount=TCNT1;
-		//}
-		TotalCount = (StartCount<EndCount) ? EndCount-StartCount : StartCount-EndCount;
-		TotalTime= TotalCount * 4; // 5-total time in microsecond (4 microseconds/count)
-		d= 0.343*TotalTime/2; //6-distance in mm (kilo * micro)
-		SensorsReadings[i+1] = (d<60); //7-Read TRUE if distance<30mm (maze width is 60mm + 10mm safety margin)
-	}
+	SensorsReadings[0]= (PINA&(1<<7));
+	for(int i=0;i<5;i++)//read sensors on doors
+	SensorsReadings[i+1]= (PINB&(1<<i));
 }
 void Timer1_Init(int denominator) {
 	TCCR1B |= (1 << WGM12); // Set CTC mode
@@ -135,19 +114,14 @@ void Timer1_Init(int denominator) {
 	sei(); // Enable global interrupts
 }
 void CheckTemperature(){
-	uint16_t ADCRead=ADC_Read(0);
-	uint16_t voltage_mv=ADCRead*5000/1024;
-	uint8_t temp=voltage_mv/10; //10 degrees per mV
-	PrintT = (temp>30); //Alert if Temperature>30 
+	PrintT = (PINA&1);
 }
 void CheckPlayers()
 {
-	CheckSensors();
 	uint8_t sum=0;
 	const char NPF[16]="NO PLAYER FOUND",OPO[16]="1 PLAYER ONLY",GBS[16]="Go to start";
 	const char GBC[16]="GO BACK, Cheat!",FRWRD[16]="Forward!";
-	for (int i=0;i<6;i++) if (SensorsReadings[i]) sum++;
-	for (int i=0;i<6;i++) if (SensorsReadings[i]) sum++; //sum the number of players, Then choose alert to print if fault
+	for (int i=0;i<6;i++) sum+=(SensorsReadings[i]); //sum the number of players, Then choose alert to print if fault
 	if(CheckForPlayer) {
 		if (sum==1) {
 			if (SensorsReadings[Door_Num]) PrintP=false;
@@ -202,30 +176,28 @@ bool CheckAnswer(uint8_t Door_Num) {
 bool winner (void)
 {
 	memset(QMemory,0,sizeof(QMemory)); //reset questions
-	Door_Num=0;
-	
 	open(6); //reset doors
-	uint8_t Tries=0;
-	char Door_str[1];
+	uint8_t Tries=0;char Door_str[1];
 	while (Tries<3&&Door_Num!=6){
 		PORTC= (PORTC&0xF8)|(Door_Num+1);
 		sprintf(Door_str,"%d",Door_Num + 1);
 		LCD_Init(),BeMessage("Door "),BeMessage(Door_str),_delay_ms(5); //display door number
 		sprintf(Door_str,"%d",3-Tries);
-		BeMode(0xC0),BeMessage("Tries left: "),BeMessage(Door_str),_delay_ms(5); //display tries left
+		strcat(Door_str, " Tries Left");
+		BeMode(0xC0),BeMessage(Door_str),_delay_ms(5); //display tries left
 		if (CheckAnswer(Door_Num)) {
-			open(++Door_Num-1); // open the door
-			Tries=0; //reset Tries to zero
+			open(++Door_Num-1), // open the door
+			Tries=0, //reset Tries to zero
 			PORTC= (PORTC&0xF8) | (1+Door_Num); //Coloured LEDs in Binary
 		}
 		else {
-			Tries++; //increment Tries
-			LCD_Init();
-			BeMessage("Wrong");
+			Tries++, //increment Tries
+			LCD_Init(),
+			BeMessage("Wrong"),
 			_delay_ms(20);
 		}
 	}
-	Door_Num= Door_Num*(Tries<3);
+	Door_Num=0;
 	return (Tries<3);
 }
 void BeMode(uint8_t cmd) {
@@ -244,44 +216,29 @@ void BeMode(uint8_t cmd) {
 	PORTA &= ~(1 << 2); // Disable pulse
 	_delay_ms(20);
 }
+void setB(bool door,bool set){
+	PORTB|=(1<<(door+6));
+	(!set) ? _delay_us(200) : _delay_us(20);
+	PORTB &= ~(1<<(door+6));
+	_delay_ms(20);
+}
+void setD(uint8_t door,bool set){
+	door+= (door<4) ? -2 : 2;
+	PORTD|=(1<<door);
+	(!set) ? _delay_us(200) : _delay_us(20);
+	//delay 20 is reseting and 200 is setting, the timer caused this hassle because it delays the motors
+	PORTD &= ~(1<<door);
+	_delay_ms(20);
+}
 void open(uint8_t Door){
-	cli();
-	switch(Door){
-		case 0: //steps to open a door:
-			PORTB|=(1<<6),//1- send HIGH pulse
-			_delay_ms(2),//2- HIGH pulse should be 2ms wide
-			PORTB&=~(1<<6); //3- send LOW pulse, 4th step below
-			break;
-		case 1:// second door
-			PORTB|=(1<<7),_delay_ms(2),PORTB&=~(1<<7);
-			break;
-		case 2: // third door
-			PORTD|=(1<<0),_delay_ms(2),PORTD&=~(1<<0);
-			break;
-		case 3:
-			PORTD|=(1<<1),_delay_ms(2),PORTD&=~(1<<1);
-		break;
-		case 4:
-			PORTD|=(1<<6),_delay_ms(2),PORTD&=~(1<<6);
-		break;
-		case 5:
-			PORTD|=(1<<7),_delay_ms(2),PORTD&=~(1<<7);
-		break;
-		default: //reset all doors (do same as above, just make it 1 ms and 19 ms instead)
-		//HIGH for opened doors:
-		if(Door_Num>=1) PORTB|=(1<<6);
-		if(Door_Num>=2)	PORTB|=(1<<7);
-		if(Door_Num>=3)	PORTD|=(1<<0);
-		if(Door_Num>=4) PORTD|=(1<<1);
-		if(Door_Num>=5) PORTD|=(1<<6);
-		if(Door_Num==6) PORTD|=(1<<7);
-		_delay_ms(1);//DELAY
-		PORTB&=~0xC0,PORTD&=~0xC3;//LOW
-		_delay_ms(1);//DELAY, continue the delay after breaking the switch
-		Door_Num=0;
+	if (Door<2) setB(Door,true);
+	else if (Door<6) setD(Door,true);
+	else{
+		setB(false,false),
+		setB(true,false);
+		for (uint8_t i =2;i<6;i++)
+		setD(i,false);
 	}
-	_delay_ms(18); // 4-LOW pulse should be 18 ms wide
-	sei();
 	Timer1_Init(20);
 }
 void BeM(char* str) {

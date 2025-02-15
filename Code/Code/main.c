@@ -69,10 +69,10 @@ double ultra(void);
 int main(void){
 	ADC_init();
 	DDRA=0b01111110;//will use PA0 for temp sensor,PA7 for force sensor, the rest are for the LCD
-	DDRB=0b11000000; // will use and PB(0-4) for door sensors input, and PB(6-7) for 2 doors
+	DDRB=0x03; // will use and PB(0-4) for door sensors input, and PB(6-7) for 2 doors
 	DDRD=1; //will use PD(2-5) for Keypad, PD0 for trig, PD6 for Echo
 	DDRC=0xFF; // set Pins PC5 for buzzer, PC(0-2) for blu/GRN/red leds, other pins for 4 doors
-	PORTB=0,PORTC=1,PORTD=0x40,PORTA=0;_delay_ms(20); //Reset Ports
+	PORTB=0,PORTC=1,PORTD=0b01111100,PORTA=0;_delay_ms(20); //Reset Ports
 	open(7);
 	Timer1_Init(),Timer0_Init();
 	LCD_Init();BeMessage("HALLO");
@@ -81,9 +81,9 @@ int main(void){
 	{
 		uint8_t FSR_Voltage = ADC_Read(7);
 		uint8_t Players_First_Gate= (Players_First_Gate>300) ? 2 : (FSR_Voltage!=0);
-		while(!(Players_First_Gate&1)){
+		while(Players_First_Gate!=1){
 			FSR_Voltage = ADC_Read(7);
-			Players_First_Gate= (Players_First_Gate>300) ? 2 : (FSR_Voltage!=0);
+			Players_First_Gate= (Players_First_Gate>300) ? 2 : (FSR_Voltage>20);
 			LCD_Init();
 			if (Players_First_Gate&2)
 			BeMessage("1 PLAYER ONLY");
@@ -95,8 +95,8 @@ int main(void){
 		LCD_Init(),
 		BeMessage("Congratulations!"),
 		_delay_ms(1500),
-		BeMode(0xC0),
-		BeMessage("    YOU WIN"),// new line
+		BeMode(0xC0),// new line
+		BeMessage("    YOU WIN"),
 		_delay_ms(1500);
 		while (ultra()<5)
 		LCD_Init(),
@@ -111,7 +111,7 @@ void Timer0_Init() {
 }
 bool CheckTemperature(){
 	uint16_t Current_NHC_Volt = ADC_Read(0);
-	return ((Current_NHC_Volt<250)&&Current_NHC_Volt); //Alert if NHC is heated (voltage drop over 250 counts);
+	return ((Current_NHC_Volt<150)&&(Current_NHC_Volt!=0)); //Alert if NHC is heated (voltage drop over 150 counts);
 }
 bool CheckAnswer(uint8_t Door_Num) {
 	uint8_t q = cycle;
@@ -126,11 +126,13 @@ bool CheckAnswer(uint8_t Door_Num) {
 		BeMode(0xC0),BeMessage(answers[q][1]),_delay_ms(5); // new line
 
 		for (uint8_t i = 2; i <= 5; i++) {
-			if (PIND & (1 << i)) {
+			if (!(PIND & (1 << i))) {
 				PORTC |= 1 << 5;
 				_delay_ms(50);
 				PORTC &= ~(1 << 5); // Buzzer sound
 				_delay_ms(10);
+				PORTC = (PORTC&(~7))|i;
+				_delay_ms(2000);
 				return ((i-2)==correct_answers[q]);
 			}
 		}
@@ -139,6 +141,7 @@ bool CheckAnswer(uint8_t Door_Num) {
 }
 bool winner (void)
 {
+	LCD_Init();
 	memset(QMemory,0,sizeof(QMemory)); //reset questions
 	open(6); //reset doors
 	uint8_t Tries=0;char Door_str[1];
@@ -183,17 +186,17 @@ void BeMode(uint8_t cmd) {
 }
 void setB(bool door,bool set){
 	for (int i=0;i<50;i++)
-	PORTB|=(1<<(door+6)),
+	PORTB|=(1<<(door)),
 	(set) ? _delay_ms(1) : _delay_ms(2),
-	PORTB &= ~(1<<(door+6)),
+	PORTB &= ~(1<<(door)),
 	(set) ? _delay_ms(19) : _delay_ms(18);
 }
 void setC(uint8_t door,bool set){
 	door+= (door<4) ? 1 : 2;
 	for (int i=0;i<50;i++)
-	PORTD|=(1<<door),
+	PORTC|=(1<<door),
 	(set) ? _delay_ms(1) : _delay_ms(2),
-	PORTD &= ~(1<<door),
+	PORTC &= ~(1<<door),
 	(set) ? _delay_ms(19) : _delay_ms(18);
 }
 void open(uint8_t Door){
@@ -221,8 +224,9 @@ void BeMessage(char* str) {
 		PORTA |= (1 << 2); // Enable pulse
 		_delay_us(15);
 		PORTA &= ~(1 << 2); // Disable pulse
-		_delay_ms(15);
+		_delay_ms(50);
 	}
+	_delay_ms(1500);
 }
 void LCD_Init(void) {
 	_delay_ms(20); // LCD power on delay
